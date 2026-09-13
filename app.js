@@ -38,6 +38,7 @@ document.addEventListener('visibilitychange', () => {
     acquireWakeLock();
   }
 });
+window.addEventListener('pagehide', () => playerController?.disconnect());
 
 // Loads (and caches) the story list for a show — shared by the stories
 // grid and the player screen, so deep-linking straight into a player
@@ -88,10 +89,10 @@ function renderLoading(message) {
 
 // ---------- Screen 1: home grid ----------
 async function renderHomeScreen() {
-  if (playerController) {
-    playerController.disconnect();
-    playerController = null;
-  }
+  // Pause, but keep the SDK connection alive — tearing down and recreating
+  // the Web Playback SDK device on every show switch is a race that
+  // intermittently leaves the next screen stuck waiting for a 'ready' event.
+  playerController?.pause();
   releaseWakeLock();
 
   root.innerHTML = '';
