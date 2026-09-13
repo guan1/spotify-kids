@@ -86,6 +86,10 @@ class SpotifyPlayerController {
     return this.player?.togglePlay();
   }
 
+  pause() {
+    return this.player?.pause();
+  }
+
   disconnect() {
     this.player?.disconnect();
     this.player = null;

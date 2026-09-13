@@ -77,6 +77,7 @@ async function renderShowScreen(showId) {
   const show = SHOWS.find(s => s.id === showId);
   if (!show) return navigate('/');
 
+  playerController?.pause();
   renderLoading('Lade Geschichten…');
 
   let stories;
