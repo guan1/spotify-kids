@@ -1,6 +1,6 @@
 const API_BASE = 'https://api.spotify.com/v1';
 
-async function apiFetch(path, options = {}) {
+async function apiFetch(path, options = {}, isRetry = false) {
   const token = await getValidAccessToken();
   const res = await fetch(API_BASE + path, {
     ...options,
@@ -9,6 +9,19 @@ async function apiFetch(path, options = {}) {
       ...(options.headers || {})
     }
   });
+
+  if (res.status === 429 && !isRetry) {
+    const body = await res.json().catch(() => ({}));
+    if (body.error?.reason === 'QUOTA_EXCEEDED') {
+      // A hard per-account daily/hourly ceiling, not a short burst limit —
+      // retrying immediately would just fail again and waste another call.
+      throw new Error('Spotify-Limit für heute erreicht. Bitte später erneut versuchen.');
+    }
+    const retryAfterSeconds = Number(res.headers.get('Retry-After')) || 1;
+    await new Promise(resolve => setTimeout(resolve, (retryAfterSeconds + 1) * 1000));
+    return apiFetch(path, options, true);
+  }
+
   if (!res.ok) {
     const text = await res.text().catch(() => '');
     throw new Error(`Spotify API ${res.status} on ${path}: ${text}`);

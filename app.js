@@ -40,21 +40,67 @@ document.addEventListener('visibilitychange', () => {
 });
 window.addEventListener('pagehide', () => playerController?.disconnect());
 
-// Loads (and caches) the story list for a show — shared by the stories
-// grid and the player screen, so deep-linking straight into a player
-// route (e.g. from the "continue listening" tile) works on its own.
-async function loadStories(showId) {
-  if (!storiesCache[showId]) {
-    const show = SHOWS.find(s => s.id === showId);
-    const albums = await getArtistAlbums(show.artistId);
-    storiesCache[showId] = albums.map(album => ({
-      title: album.name,
-      image: album.images?.[0]?.url || null,
-      albumId: album.id,
-      uris: null
-    }));
+// Persistent cache (survives reloads) for catalog data that barely ever
+// changes — the point isn't speed, it's staying well under Spotify's
+// Development Mode quota, which is a hard per-account ceiling.
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+function readCache(key, maxAgeMs) {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    const { savedAt, data } = JSON.parse(raw);
+    if (Date.now() - savedAt > maxAgeMs) return null;
+    return data;
+  } catch {
+    return null;
   }
-  return storiesCache[showId];
+}
+function writeCache(key, data) {
+  try {
+    localStorage.setItem(key, JSON.stringify({ savedAt: Date.now(), data }));
+  } catch {
+    // Storage full/unavailable — non-fatal, just skip persistence.
+  }
+}
+
+// Loads (and caches, in memory + localStorage) the story list for a show —
+// shared by the stories grid and the player screen, so deep-linking
+// straight into a player route (e.g. from the "continue listening" tile)
+// works on its own.
+async function loadStories(showId) {
+  if (storiesCache[showId]) return storiesCache[showId];
+
+  const cacheKey = `sk_stories_${showId}`;
+  const cached = readCache(cacheKey, DAY_MS);
+  if (cached) {
+    storiesCache[showId] = cached;
+    return cached;
+  }
+
+  const show = SHOWS.find(s => s.id === showId);
+  const albums = await getArtistAlbums(show.artistId);
+  const stories = albums.map(album => ({
+    title: album.name,
+    image: album.images?.[0]?.url || null,
+    albumId: album.id,
+    uris: null
+  }));
+  storiesCache[showId] = stories;
+  writeCache(cacheKey, stories);
+  return stories;
+}
+
+// Track URIs for an album essentially never change — cache them for longer.
+async function loadAlbumUris(albumId) {
+  const cacheKey = `sk_album_uris_${albumId}`;
+  const cached = readCache(cacheKey, 30 * DAY_MS);
+  if (cached) return cached;
+
+  const tracks = await getAlbumTracks(albumId);
+  const uris = tracks.map(t => t.uri);
+  writeCache(cacheKey, uris);
+  return uris;
 }
 
 function el(html) {
@@ -123,15 +169,23 @@ async function renderHomeScreen() {
     grid.appendChild(tile);
 
     if (!playlistImageCache[show.id]) {
-      getPlaylist(show.playlistId)
-        .then(playlist => {
-          const url = playlist.images?.[0]?.url;
-          if (url) {
-            playlistImageCache[show.id] = url;
-            tile.querySelector('img').src = url;
-          }
-        })
-        .catch(err => console.error('Failed to load playlist image', show.id, err));
+      const cacheKey = `sk_playlist_image_${show.id}`;
+      const cachedUrl = readCache(cacheKey, DAY_MS);
+      if (cachedUrl) {
+        playlistImageCache[show.id] = cachedUrl;
+        tile.querySelector('img').src = cachedUrl;
+      } else {
+        getPlaylist(show.playlistId)
+          .then(playlist => {
+            const url = playlist.images?.[0]?.url;
+            if (url) {
+              playlistImageCache[show.id] = url;
+              tile.querySelector('img').src = url;
+              writeCache(cacheKey, url);
+            }
+          })
+          .catch(err => console.error('Failed to load playlist image', show.id, err));
+      }
     }
   }
 }
@@ -256,8 +310,7 @@ async function renderPlayerScreen(showId, storyIndex) {
   renderLoadingOverlay(screen);
   try {
     if (!story.uris) {
-      const tracks = await getAlbumTracks(story.albumId);
-      story.uris = tracks.map(t => t.uri);
+      story.uris = await loadAlbumUris(story.albumId);
     }
     await playerController.playUris(story.uris);
     removeLoadingOverlay(screen);
