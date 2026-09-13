@@ -10,6 +10,7 @@ const SHELL_FILES = [
   'api.js',
   'player.js',
   'app.js',
+  'update-check.js',
   'manifest.json'
 ];
 
@@ -31,6 +32,7 @@ self.addEventListener('activate', event => {
 self.addEventListener('fetch', event => {
   const url = new URL(event.request.url);
   if (url.origin !== self.location.origin) return; // never intercept Spotify API/auth calls
+  if (event.request.method !== 'GET') return; // e.g. the update-check HEAD request — Cache API only accepts GET
   // Network-first so local edits show up on reload; falls back to cache when offline.
   event.respondWith(
     fetch(event.request)
