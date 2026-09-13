@@ -78,6 +78,11 @@ async function loadStories(showId) {
     return cached;
   }
 
+  const stories = await fetchAndCacheStories(showId);
+  return stories;
+}
+
+async function fetchAndCacheStories(showId) {
   const show = SHOWS.find(s => s.id === showId);
   const albums = await getArtistAlbums(show.artistId);
   const stories = albums.map(album => ({
@@ -87,8 +92,19 @@ async function loadStories(showId) {
     uris: null
   }));
   storiesCache[showId] = stories;
-  writeCache(cacheKey, stories);
+  writeCache(`sk_stories_${showId}`, stories);
   return stories;
+}
+
+// The app can run for days without a real reload (e.g. an iPad pinned in
+// Guided Access), so loadStories()'s in-memory cache would otherwise never
+// re-check the daily TTL. Call this from the home screen — reached
+// naturally between stories — to silently pick up new episodes.
+function refreshStoriesIfStale(showId) {
+  if (readCache(`sk_stories_${showId}`, DAY_MS)) return; // still fresh
+  fetchAndCacheStories(showId).catch(err =>
+    console.warn('Background refresh of stories failed for', showId, err)
+  );
 }
 
 // Track URIs for an album essentially never change — cache them for longer.
@@ -159,6 +175,8 @@ async function renderHomeScreen() {
   }
 
   for (const show of SHOWS) {
+    refreshStoriesIfStale(show.id);
+
     const tile = el(`
       <button class="tile">
         <img alt="" src="${playlistImageCache[show.id] || ''}">
