@@ -1,14 +1,5 @@
 const API_BASE = 'https://api.spotify.com/v1';
 
-// Formats a Retry-After (seconds from now) as a clock time, adding the
-// date too if it falls on a different day (quota resets can be far out).
-function formatRetryTime(retryAfterSeconds) {
-  const target = new Date(Date.now() + retryAfterSeconds * 1000);
-  const sameDay = target.toDateString() === new Date().toDateString();
-  const time = target.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
-  return sameDay ? time : `${time} (${target.toLocaleDateString('de-DE')})`;
-}
-
 async function apiFetch(path, options = {}, isRetry = false) {
   const token = await getValidAccessToken();
   const res = await fetch(API_BASE + path, {
@@ -20,20 +11,17 @@ async function apiFetch(path, options = {}, isRetry = false) {
   });
 
   if (res.status === 429 && !isRetry) {
+    // Spotify never sets Access-Control-Expose-Headers, so Retry-After is
+    // structurally unreadable from browser JS on this cross-origin request
+    // (visible in devtools' Network tab, but not via fetch()'s Headers) —
+    // there's no client-only way to show the real retry time here.
     const body = await res.json().catch(() => ({}));
-    const retryAfterHeader = res.headers.get('Retry-After');
-    const retryAfterSeconds = Number(retryAfterHeader);
-    const hasRetryAfter = retryAfterHeader && !Number.isNaN(retryAfterSeconds);
-
     if (body.error?.reason === 'QUOTA_EXCEEDED') {
       // A hard per-account daily/hourly ceiling, not a short burst limit —
       // retrying immediately would just fail again and waste another call.
-      const message = hasRetryAfter
-        ? `Spotify Limit erreicht, versuche es um ${formatRetryTime(retryAfterSeconds)} nochmal`
-        : 'Spotify-Limit für heute erreicht. Bitte später erneut versuchen.';
-      throw new Error(message);
+      throw new Error('Spotify-Limit für heute erreicht. Bitte später erneut versuchen.');
     }
-    await new Promise(resolve => setTimeout(resolve, ((hasRetryAfter ? retryAfterSeconds : 1) + 1) * 1000));
+    await new Promise(resolve => setTimeout(resolve, 2000));
     return apiFetch(path, options, true);
   }
 
