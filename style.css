@@ -52,6 +52,7 @@ html, body {
 }
 
 .tile {
+  position: relative;
   background: none;
   border: none;
   padding: 0;
@@ -76,6 +77,24 @@ html, body {
   text-align: center;
   color: #fff;
   padding: 0 4px;
+}
+.tile .badge {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: #1db954;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.9rem;
+}
+.continue-tile img {
+  outline: 3px solid #1db954;
+  outline-offset: 2px;
 }
 
 .screen-header {

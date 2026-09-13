@@ -6,6 +6,55 @@ const storiesCache = {}; // showId -> [{title, image, albumId, uris}] (uris fill
 
 let playerController = null;
 let currentStoryPaused = true;
+let wakeLock = null;
+
+const CONTINUE_KEY = 'sk_continue';
+
+function saveContinueListening(entry) {
+  localStorage.setItem(CONTINUE_KEY, JSON.stringify(entry));
+}
+function loadContinueListening() {
+  try {
+    return JSON.parse(localStorage.getItem(CONTINUE_KEY) || 'null');
+  } catch {
+    return null;
+  }
+}
+
+async function acquireWakeLock() {
+  if (!('wakeLock' in navigator)) return;
+  try {
+    wakeLock = await navigator.wakeLock.request('screen');
+  } catch (err) {
+    console.warn('Wake lock request failed', err);
+  }
+}
+function releaseWakeLock() {
+  wakeLock?.release().catch(() => {});
+  wakeLock = null;
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && window.location.hash.startsWith('#/play/')) {
+    acquireWakeLock();
+  }
+});
+
+// Loads (and caches) the story list for a show — shared by the stories
+// grid and the player screen, so deep-linking straight into a player
+// route (e.g. from the "continue listening" tile) works on its own.
+async function loadStories(showId) {
+  if (!storiesCache[showId]) {
+    const show = SHOWS.find(s => s.id === showId);
+    const albums = await getArtistAlbums(show.artistId);
+    storiesCache[showId] = albums.map(album => ({
+      title: album.name,
+      image: album.images?.[0]?.url || null,
+      albumId: album.id,
+      uris: null
+    }));
+  }
+  return storiesCache[showId];
+}
 
 function el(html) {
   const t = document.createElement('template');
@@ -43,10 +92,24 @@ async function renderHomeScreen() {
     playerController.disconnect();
     playerController = null;
   }
+  releaseWakeLock();
 
   root.innerHTML = '';
   const grid = el('<div class="grid"></div>');
   root.appendChild(grid);
+
+  const continueEntry = loadContinueListening();
+  if (continueEntry) {
+    const tile = el(`
+      <button class="tile continue-tile">
+        <img alt="" src="${continueEntry.image || ''}">
+        <span class="badge">▶</span>
+        <span class="tile-label">Weiter hören: ${continueEntry.title}</span>
+      </button>
+    `);
+    tile.addEventListener('click', () => navigate(`/play/${continueEntry.showId}/${continueEntry.storyIndex}`));
+    grid.appendChild(tile);
+  }
 
   for (const show of SHOWS) {
     const tile = el(`
@@ -78,20 +141,12 @@ async function renderShowScreen(showId) {
   if (!show) return navigate('/');
 
   playerController?.pause();
+  releaseWakeLock();
   renderLoading('Lade Geschichten…');
 
   let stories;
   try {
-    if (!storiesCache[showId]) {
-      const albums = await getArtistAlbums(show.artistId);
-      storiesCache[showId] = albums.map(album => ({
-        title: album.name,
-        image: album.images?.[0]?.url || null,
-        albumId: album.id,
-        uris: null
-      }));
-    }
-    stories = storiesCache[showId];
+    stories = await loadStories(showId);
   } catch (err) {
     console.error('Failed to load stories for', showId, err);
     renderError(err.message, () => renderShowScreen(showId));
@@ -110,10 +165,14 @@ async function renderShowScreen(showId) {
   const grid = el('<div class="grid"></div>');
   root.appendChild(grid);
 
+  const continueEntry = loadContinueListening();
+
   stories.forEach((story, index) => {
+    const isNowPlaying = continueEntry?.showId === showId && continueEntry?.storyIndex === index;
     const tile = el(`
       <button class="tile">
         <img alt="" src="${story.image || ''}">
+        ${isNowPlaying ? '<span class="badge">▶</span>' : ''}
         <span class="tile-label">${story.title}</span>
       </button>
     `);
@@ -125,8 +184,20 @@ async function renderShowScreen(showId) {
 // ---------- Screen 3: player ----------
 async function renderPlayerScreen(showId, storyIndex) {
   const show = SHOWS.find(s => s.id === showId);
-  const stories = storiesCache[showId];
-  if (!show || !stories || !stories[storyIndex]) return navigate('/');
+  if (!show) return navigate('/');
+
+  let stories = storiesCache[showId];
+  if (!stories) {
+    renderLoading('Lade Geschichten…');
+    try {
+      stories = await loadStories(showId);
+    } catch (err) {
+      console.error('Failed to load stories for', showId, err);
+      renderError(err.message, () => renderPlayerScreen(showId, storyIndex));
+      return;
+    }
+  }
+  if (!stories[storyIndex]) return navigate('/');
 
   const story = stories[storyIndex];
 
@@ -161,9 +232,24 @@ async function renderPlayerScreen(showId, storyIndex) {
   }
   // Re-bind every render: the button element is new each time, but the
   // controller (and its SDK connection) persists across story navigation.
+  let hasStartedPlaying = false;
+  let autoAdvanceTriggered = false;
   playerController.onStateChange = state => {
     currentStoryPaused = state.paused;
     playPauseBtn.textContent = state.paused ? '⏵' : '⏸';
+
+    if (!state.paused) hasStartedPlaying = true;
+
+    const reachedEnd = hasStartedPlaying && state.paused &&
+      state.position === 0 &&
+      state.track_window.next_tracks.length === 0;
+
+    if (reachedEnd && !autoAdvanceTriggered) {
+      autoAdvanceTriggered = true;
+      if (storyIndex < stories.length - 1) {
+        navigate(`/play/${showId}/${storyIndex + 1}`);
+      }
+    }
   };
 
   renderLoadingOverlay(screen);
@@ -174,6 +260,8 @@ async function renderPlayerScreen(showId, storyIndex) {
     }
     await playerController.playUris(story.uris);
     removeLoadingOverlay(screen);
+    acquireWakeLock();
+    saveContinueListening({ showId, storyIndex, title: story.title, image: story.image });
   } catch (err) {
     console.error('Failed to start playback', err);
     renderError(err.message, () => renderPlayerScreen(showId, storyIndex));
