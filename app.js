@@ -8,6 +8,28 @@ let playerController = null;
 let currentStoryPaused = true;
 let wakeLock = null;
 
+// Guards against a runaway auto-advance chain reaction: if playback of a
+// story fails in a way that immediately looks like "finished" (e.g. an
+// unsupported URI type), naively auto-advancing would hammer startPlayback
+// for every remaining story in a fraction of a second — which is exactly
+// what burned a day's API quota once already.
+const autoAdvanceGuard = { showId: null, count: 0, lastAt: 0 };
+function autoAdvanceAllowed(showId) {
+  const now = Date.now();
+  if (autoAdvanceGuard.showId === showId && now - autoAdvanceGuard.lastAt < 15000) {
+    autoAdvanceGuard.count++;
+  } else {
+    autoAdvanceGuard.showId = showId;
+    autoAdvanceGuard.count = 1;
+  }
+  autoAdvanceGuard.lastAt = now;
+  return autoAdvanceGuard.count <= 2;
+}
+function resetAutoAdvanceGuard() {
+  autoAdvanceGuard.showId = null;
+  autoAdvanceGuard.count = 0;
+}
+
 const CONTINUE_KEY = 'sk_continue';
 
 function saveContinueListening(entry) {
@@ -168,6 +190,7 @@ async function renderHomeScreen() {
   // intermittently leaves the next screen stuck waiting for a 'ready' event.
   playerController?.pause();
   releaseWakeLock();
+  resetAutoAdvanceGuard();
 
   root.innerHTML = '';
   const grid = el('<div class="grid"></div>');
@@ -230,6 +253,7 @@ async function renderShowScreen(showId) {
 
   playerController?.pause();
   releaseWakeLock();
+  resetAutoAdvanceGuard();
   renderLoading('Lade Geschichten…');
 
   let stories;
@@ -311,8 +335,14 @@ async function renderPlayerScreen(showId, storyIndex) {
   prevBtn.disabled = storyIndex === 0;
   nextBtn.disabled = storyIndex === stories.length - 1;
 
-  prevBtn.addEventListener('click', () => navigate(`/play/${showId}/${storyIndex - 1}`));
-  nextBtn.addEventListener('click', () => navigate(`/play/${showId}/${storyIndex + 1}`));
+  prevBtn.addEventListener('click', () => {
+    resetAutoAdvanceGuard();
+    navigate(`/play/${showId}/${storyIndex - 1}`);
+  });
+  nextBtn.addEventListener('click', () => {
+    resetAutoAdvanceGuard();
+    navigate(`/play/${showId}/${storyIndex + 1}`);
+  });
   playPauseBtn.addEventListener('click', () => playerController?.togglePlay());
 
   if (!playerController) {
@@ -322,20 +352,33 @@ async function renderPlayerScreen(showId, storyIndex) {
   // controller (and its SDK connection) persists across story navigation.
   let hasStartedPlaying = false;
   let autoAdvanceTriggered = false;
+  let playbackStartedAt = 0;
   playerController.onStateChange = state => {
     currentStoryPaused = state.paused;
     playPauseBtn.textContent = state.paused ? '⏵' : '⏸';
 
     if (!state.paused) hasStartedPlaying = true;
 
-    const reachedEnd = hasStartedPlaying && state.paused &&
+    // Require a few real seconds of playback before trusting an "ended"
+    // signal — an unsupported/broken URI can report a finished-looking
+    // state (paused, position 0, nothing queued) almost instantly.
+    const playedLongEnough = playbackStartedAt && (Date.now() - playbackStartedAt) > 3000;
+    const reachedEnd = hasStartedPlaying && playedLongEnough && state.paused &&
       state.position === 0 &&
       state.track_window.next_tracks.length === 0;
 
     if (reachedEnd && !autoAdvanceTriggered) {
       autoAdvanceTriggered = true;
       if (storyIndex < stories.length - 1) {
-        navigate(`/play/${showId}/${storyIndex + 1}`);
+        if (autoAdvanceAllowed(showId)) {
+          navigate(`/play/${showId}/${storyIndex + 1}`);
+        } else {
+          console.error('Auto-advance loop detected, stopping.');
+          renderError(
+            'Wiedergabe wurde mehrfach automatisch übersprungen — evtl. Problem mit dieser Geschichte. Bitte manuell auswählen.',
+            () => navigate('/')
+          );
+        }
       }
     }
   };
@@ -346,6 +389,7 @@ async function renderPlayerScreen(showId, storyIndex) {
       story.uris = await loadAlbumUris(story.albumId);
     }
     await playerController.playUris(story.uris);
+    playbackStartedAt = Date.now();
     removeLoadingOverlay(screen);
     acquireWakeLock();
     saveContinueListening({ showId, storyIndex, title: story.title, image: story.image });
