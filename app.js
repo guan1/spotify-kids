@@ -86,6 +86,13 @@ function writeCache(key, data) {
   }
 }
 
+// Namespaced by show type so changing a show's type (e.g. episodes ->
+// albums, after discovering episode playback doesn't work) can't
+// accidentally reuse stale data in the old schema.
+function storiesCacheKey(show) {
+  return `sk_stories_${show.id}_${show.type}`;
+}
+
 // Loads (and caches, in memory + localStorage) the story list for a show —
 // shared by the stories grid and the player screen, so deep-linking
 // straight into a player route (e.g. from the "continue listening" tile)
@@ -93,8 +100,8 @@ function writeCache(key, data) {
 async function loadStories(showId) {
   if (storiesCache[showId]) return storiesCache[showId];
 
-  const cacheKey = `sk_stories_${showId}`;
-  const cached = readCache(cacheKey, DAY_MS);
+  const show = SHOWS.find(s => s.id === showId);
+  const cached = readCache(storiesCacheKey(show), DAY_MS);
   if (cached) {
     storiesCache[showId] = cached;
     return cached;
@@ -126,7 +133,7 @@ async function fetchAndCacheStories(showId) {
   }
 
   storiesCache[showId] = stories;
-  writeCache(`sk_stories_${showId}`, stories);
+  writeCache(storiesCacheKey(show), stories);
   return stories;
 }
 
@@ -135,7 +142,8 @@ async function fetchAndCacheStories(showId) {
 // re-check the daily TTL. Call this from the home screen — reached
 // naturally between stories — to silently pick up new episodes.
 function refreshStoriesIfStale(showId) {
-  if (readCache(`sk_stories_${showId}`, DAY_MS)) return; // still fresh
+  const show = SHOWS.find(s => s.id === showId);
+  if (readCache(storiesCacheKey(show), DAY_MS)) return; // still fresh
   fetchAndCacheStories(showId).catch(err =>
     console.warn('Background refresh of stories failed for', showId, err)
   );
@@ -230,7 +238,9 @@ async function renderHomeScreen() {
       } else {
         const fetchCover = show.type === 'episodes'
           ? getShow(show.showId)
-          : getPlaylist(show.playlistId);
+          : show.playlistId
+            ? getPlaylist(show.playlistId)
+            : getArtist(show.artistId);
         fetchCover
           .then(result => {
             const url = result.images?.[0]?.url;

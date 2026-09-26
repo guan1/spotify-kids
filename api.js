@@ -37,6 +37,12 @@ async function getPlaylist(playlistId) {
   return apiFetch(`/playlists/${playlistId}?fields=id,name,images`);
 }
 
+// No 'fields' filter here — that query param is only documented for
+// playlist endpoints; untested elsewhere and not worth the risk.
+async function getArtist(artistId) {
+  return apiFetch(`/artists/${artistId}`);
+}
+
 // Every album by this artist is one "story". Public catalog data — no
 // ownership restriction, unlike playlist track contents.
 async function getArtistAlbums(artistId) {
@@ -65,7 +71,7 @@ async function getAlbumTracks(albumId) {
 }
 
 async function getShow(showId) {
-  return apiFetch(`/shows/${showId}?fields=id,name,images`);
+  return apiFetch(`/shows/${showId}`);
 }
 
 // Every episode of this show is one "story". Public catalog data — no

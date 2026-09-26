@@ -25,16 +25,15 @@ const SPOTIFY_CONFIG = {
 // type: 'albums' — each story is one album by an artist. Albums are public
 //   catalog data (no ownership restriction, unlike playlist track contents).
 //   artistId: from the artist's share link https://open.spotify.com/artist/<ID>
-//   playlistId: only used for the home tile's cover image (playlist metadata
-//     is public regardless of ownership) — from a playlist's share link
+//   playlistId: optional — if given, used for the home tile's cover image
+//     instead of the artist's own image (playlist metadata is public
+//     regardless of ownership) — from a playlist's share link
 //     https://open.spotify.com/playlist/<ID>
 //
-// type: 'episodes' — each story is one episode of a podcast show. Episodes
-//   are public catalog data too, and (unlike albums/tracks) already carry
-//   their own playable URI directly, so no separate per-story track lookup
-//   is needed. NOTE: Spotify's playback API only documents track URIs for
-//   the uris array we pass to start playback — episode URIs there are
-//   untested/unofficial and need to be verified live once deployed.
+// type: 'episodes' — each story is one episode of a podcast show. CONFIRMED
+//   BROKEN: Spotify's Start Playback endpoint silently no-ops on episode
+//   URIs in its 'uris' array (see github.com/thelinmichael/spotify-web-api-node
+//   issue #365) — do not use this type until Spotify fixes that.
 //   showId: from the show's share link https://open.spotify.com/show/<ID>
 const SHOWS = [
   {
@@ -54,7 +53,7 @@ const SHOWS = [
   {
     id: 'anna',
     name: 'Anna und die Wilden Tiere',
-    type: 'episodes',
-    showId: '1wDRxT0vAx2gU3cSgcNcL5'
+    type: 'albums',
+    artistId: '0bz4kbpDUnLUfjvLFf4USx'
   }
 ];
