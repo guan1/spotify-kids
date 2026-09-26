@@ -49,11 +49,5 @@ const SHOWS = [
     type: 'albums',
     playlistId: '3bgcec2nqbxCWhP3wZBbsY',
     artistId: '1AqcmVcO9EkjniNmbAwef3'
-  },
-  {
-    id: 'anna',
-    name: 'Anna und die Wilden Tiere',
-    type: 'albums',
-    artistId: '0bz4kbpDUnLUfjvLFf4USx'
   }
 ];
