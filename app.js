@@ -395,10 +395,16 @@ async function renderPlayerScreen(showId, storyIndex) {
 
   renderLoadingOverlay(screen);
   try {
-    if (!story.uris) {
-      story.uris = await loadAlbumUris(story.albumId);
+    if (show.contextPlaylistId) {
+      // EXPERIMENTAL — see config.js for the hypothesis being tested.
+      const contextUri = `spotify:playlist:${show.contextPlaylistId}`;
+      await playerController.playContextAtOffset(contextUri, story.uris[0]);
+    } else {
+      if (!story.uris) {
+        story.uris = await loadAlbumUris(story.albumId);
+      }
+      await playerController.playUris(story.uris);
     }
-    await playerController.playUris(story.uris);
     playbackStartedAt = Date.now();
     removeLoadingOverlay(screen);
     acquireWakeLock();

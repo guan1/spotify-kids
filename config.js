@@ -30,11 +30,23 @@ const SPOTIFY_CONFIG = {
 //     regardless of ownership) — from a playlist's share link
 //     https://open.spotify.com/playlist/<ID>
 //
-// type: 'episodes' — each story is one episode of a podcast show. CONFIRMED
-//   BROKEN: Spotify's Start Playback endpoint silently no-ops on episode
-//   URIs in its 'uris' array (see github.com/thelinmichael/spotify-web-api-node
-//   issue #365) — do not use this type until Spotify fixes that.
+// type: 'episodes' — each story is one episode of a podcast show. Metadata
+//   (title/image/uri) comes from the public /shows/{id}/episodes endpoint.
 //   showId: from the show's share link https://open.spotify.com/show/<ID>
+//
+//   Playback: passing the episode's own uri directly is CONFIRMED BROKEN —
+//   Spotify's Start Playback endpoint silently no-ops on episode URIs in
+//   its 'uris' array (see github.com/thelinmichael/spotify-web-api-node
+//   issue #365). contextPlaylistId is an EXPERIMENTAL, UNVERIFIED
+//   workaround: play a playlist that happens to contain these episodes as
+//   the context_uri, with offset.uri targeting the specific episode. The
+//   hypothesis is that *playing* a public playlist as a context doesn't
+//   require owning/collaborating on it (unlike *reading* its items via
+//   the API, which does since Feb 2026) — untested, needs live
+//   confirmation. The playlist's own contents are never read via the API;
+//   it's used purely as an opaque playback context.
+//   contextPlaylistId: from a playlist's share link
+//     https://open.spotify.com/playlist/<ID> — doesn't need to be yours
 const SHOWS = [
   {
     id: 'fuchsbande',
@@ -49,5 +61,12 @@ const SHOWS = [
     type: 'albums',
     playlistId: '3bgcec2nqbxCWhP3wZBbsY',
     artistId: '1AqcmVcO9EkjniNmbAwef3'
+  },
+  {
+    id: 'anna',
+    name: 'Anna und die Wilden Tiere',
+    type: 'episodes',
+    showId: '1wDRxT0vAx2gU3cSgcNcL5',
+    contextPlaylistId: '2DE2ztUJpHMl1RVFaASE2j'
   }
 ];

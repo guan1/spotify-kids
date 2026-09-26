@@ -67,10 +67,20 @@ class SpotifyPlayerController {
   }
 
   async playUris(uris) {
+    await this._playWithDeviceRetry(deviceId => startPlayback(deviceId, uris));
+  }
+
+  // EXPERIMENTAL — see startPlaybackAtOffset in api.js for the hypothesis
+  // being tested here.
+  async playContextAtOffset(contextUri, offsetUri) {
+    await this._playWithDeviceRetry(deviceId => startPlaybackAtOffset(deviceId, contextUri, offsetUri));
+  }
+
+  async _playWithDeviceRetry(play) {
     await this.connect();
     const deviceId = await this.waitForDevice();
     try {
-      await startPlayback(deviceId, uris);
+      await play(deviceId);
     } catch (err) {
       if (!String(err.message).includes('404')) throw err;
       // Device dropped between connect and play — nudge the SDK to
@@ -78,7 +88,7 @@ class SpotifyPlayerController {
       this.deviceId = null;
       this.player.connect();
       const freshDeviceId = await this.waitForDevice();
-      await startPlayback(freshDeviceId, uris);
+      await play(freshDeviceId);
     }
   }
 
