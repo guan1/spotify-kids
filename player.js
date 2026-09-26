@@ -70,8 +70,7 @@ class SpotifyPlayerController {
     await this._playWithDeviceRetry(deviceId => startPlayback(deviceId, uris));
   }
 
-  // EXPERIMENTAL — see startPlaybackAtOffset in api.js for the hypothesis
-  // being tested here.
+  // Used for podcast-episode shows — see startPlaybackAtOffset in api.js.
   async playContextAtOffset(contextUri, offsetUri) {
     await this._playWithDeviceRetry(deviceId => startPlaybackAtOffset(deviceId, contextUri, offsetUri));
   }

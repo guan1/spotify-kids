@@ -37,16 +37,16 @@ const SPOTIFY_CONFIG = {
 //   Playback: passing the episode's own uri directly is CONFIRMED BROKEN —
 //   Spotify's Start Playback endpoint silently no-ops on episode URIs in
 //   its 'uris' array (see github.com/thelinmichael/spotify-web-api-node
-//   issue #365). contextPlaylistId is an EXPERIMENTAL, UNVERIFIED
-//   workaround: play a playlist that happens to contain these episodes as
-//   the context_uri, with offset.uri targeting the specific episode. The
-//   hypothesis is that *playing* a public playlist as a context doesn't
-//   require owning/collaborating on it (unlike *reading* its items via
-//   the API, which does since Feb 2026) — untested, needs live
-//   confirmation. The playlist's own contents are never read via the API;
-//   it's used purely as an opaque playback context.
+//   issue #365). contextPlaylistId is the CONFIRMED WORKING workaround:
+//   play a playlist that happens to contain these episodes as the
+//   context_uri, with offset.uri targeting the specific episode.
+//   *Playing* a public playlist as a context doesn't require
+//   owning/collaborating on it (unlike *reading* its items via the API,
+//   which does since Feb 2026) — the playlist's own contents are never
+//   read via the API, it's used purely as an opaque playback context.
 //   contextPlaylistId: from a playlist's share link
-//     https://open.spotify.com/playlist/<ID> — doesn't need to be yours
+//     https://open.spotify.com/playlist/<ID> — doesn't need to be yours,
+//     just needs to actually contain the episode(s) you want to target
 const SHOWS = [
   {
     id: 'fuchsbande',

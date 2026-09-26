@@ -98,16 +98,15 @@ async function startPlayback(deviceId, uris) {
   });
 }
 
-// EXPERIMENTAL — untested hypothesis, not confirmed by Spotify docs or
-// anyone else we could find: episode URIs in the plain `uris` array
-// silently no-op (github.com/thelinmichael/spotify-web-api-node#365), but
-// `offset` IS documented as valid whenever context_uri is a playlist —
-// and playlists can hold episode items. The guess is that *playing* a
-// public playlist as a context doesn't require owning/collaborating on
-// it (unlike *reading* its items via the API, which does) — the same way
-// any Spotify user can hit play on someone else's shared playlist link.
-// If true, this lets us target a specific episode without needing to
-// read the playlist at all, using metadata from getShowEpisodes instead.
+// Confirmed working: episode URIs in the plain `uris` array silently
+// no-op (github.com/thelinmichael/spotify-web-api-node#365), but `offset`
+// is documented as valid whenever context_uri is a playlist — and
+// playlists can hold episode items. Playing a public playlist as a
+// context doesn't require owning/collaborating on it (unlike *reading*
+// its items via the API, which does) — the same way any Spotify user can
+// hit play on someone else's shared playlist link. This targets a
+// specific episode without ever reading the playlist itself; metadata
+// comes from getShowEpisodes instead.
 async function startPlaybackAtOffset(deviceId, contextUri, offsetUri) {
   await apiFetch(`/me/player/play?device_id=${deviceId}`, {
     method: 'PUT',

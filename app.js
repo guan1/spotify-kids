@@ -396,7 +396,7 @@ async function renderPlayerScreen(showId, storyIndex) {
   renderLoadingOverlay(screen);
   try {
     if (show.contextPlaylistId) {
-      // EXPERIMENTAL — see config.js for the hypothesis being tested.
+      // See config.js for why this playlist-context workaround is needed.
       const contextUri = `spotify:playlist:${show.contextPlaylistId}`;
       await playerController.playContextAtOffset(contextUri, story.uris[0]);
     } else {
