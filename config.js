@@ -20,23 +20,41 @@ const SPOTIFY_CONFIG = {
 
 // ---- The hardcoded home-screen grid ----
 //
-// playlistId: only used for the home tile's cover image (playlist metadata
-//   is public regardless of ownership) — from the playlist's share link
-//   https://open.spotify.com/playlist/<THIS PART>?si=...
-// artistId: each story is one album by this artist. Albums are public
-//   catalog data (no ownership restriction, unlike playlist track contents)
-//   — from the artist's share link https://open.spotify.com/artist/<THIS PART>
+// Two supported show types:
+//
+// type: 'albums' — each story is one album by an artist. Albums are public
+//   catalog data (no ownership restriction, unlike playlist track contents).
+//   artistId: from the artist's share link https://open.spotify.com/artist/<ID>
+//   playlistId: only used for the home tile's cover image (playlist metadata
+//     is public regardless of ownership) — from a playlist's share link
+//     https://open.spotify.com/playlist/<ID>
+//
+// type: 'episodes' — each story is one episode of a podcast show. Episodes
+//   are public catalog data too, and (unlike albums/tracks) already carry
+//   their own playable URI directly, so no separate per-story track lookup
+//   is needed. NOTE: Spotify's playback API only documents track URIs for
+//   the uris array we pass to start playback — episode URIs there are
+//   untested/unofficial and need to be verified live once deployed.
+//   showId: from the show's share link https://open.spotify.com/show/<ID>
 const SHOWS = [
   {
     id: 'fuchsbande',
     name: 'Die Fuchsbande',
+    type: 'albums',
     playlistId: '1rh5amIJ00vlb0Tpy0Dt7A',
     artistId: '325gkGGHH2WrswRh3qC3e9'
   },
   {
     id: 'spidey',
     name: 'Marvels Spidey und seine Super-Freunde',
+    type: 'albums',
     playlistId: '3bgcec2nqbxCWhP3wZBbsY',
     artistId: '1AqcmVcO9EkjniNmbAwef3'
+  },
+  {
+    id: 'anna',
+    name: 'Anna und die Wilden Tiere',
+    type: 'episodes',
+    showId: '1wDRxT0vAx2gU3cSgcNcL5'
   }
 ];

@@ -64,6 +64,26 @@ async function getAlbumTracks(albumId) {
   return tracks;
 }
 
+async function getShow(showId) {
+  return apiFetch(`/shows/${showId}?fields=id,name,images`);
+}
+
+// Every episode of this show is one "story". Public catalog data — no
+// ownership restriction, unlike playlist items. Each episode already
+// carries its own playable URI, so no further per-story lookup is needed.
+async function getShowEpisodes(showId) {
+  const episodes = [];
+  let url = `/shows/${showId}/episodes?limit=50`;
+  while (url) {
+    const page = await apiFetch(url);
+    episodes.push(...page.items);
+    url = page.next ? page.next.replace(API_BASE, '') : null;
+  }
+  // Oldest (episode 1) first.
+  episodes.sort((a, b) => (a.release_date || '').localeCompare(b.release_date || ''));
+  return episodes;
+}
+
 async function startPlayback(deviceId, uris) {
   await apiFetch(`/me/player/play?device_id=${deviceId}`, {
     method: 'PUT',

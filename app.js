@@ -84,13 +84,25 @@ async function loadStories(showId) {
 
 async function fetchAndCacheStories(showId) {
   const show = SHOWS.find(s => s.id === showId);
-  const albums = await getArtistAlbums(show.artistId);
-  const stories = albums.map(album => ({
-    title: album.name,
-    image: album.images?.[0]?.url || null,
-    albumId: album.id,
-    uris: null
-  }));
+  let stories;
+
+  if (show.type === 'episodes') {
+    const episodes = await getShowEpisodes(show.showId);
+    stories = episodes.map(episode => ({
+      title: episode.name,
+      image: episode.images?.[0]?.url || null,
+      uris: [episode.uri] // episodes carry their own URI directly, no lookup needed
+    }));
+  } else {
+    const albums = await getArtistAlbums(show.artistId);
+    stories = albums.map(album => ({
+      title: album.name,
+      image: album.images?.[0]?.url || null,
+      albumId: album.id,
+      uris: null
+    }));
+  }
+
   storiesCache[showId] = stories;
   writeCache(`sk_stories_${showId}`, stories);
   return stories;
@@ -187,22 +199,25 @@ async function renderHomeScreen() {
     grid.appendChild(tile);
 
     if (!playlistImageCache[show.id]) {
-      const cacheKey = `sk_playlist_image_${show.id}`;
+      const cacheKey = `sk_home_tile_image_${show.id}`;
       const cachedUrl = readCache(cacheKey, DAY_MS);
       if (cachedUrl) {
         playlistImageCache[show.id] = cachedUrl;
         tile.querySelector('img').src = cachedUrl;
       } else {
-        getPlaylist(show.playlistId)
-          .then(playlist => {
-            const url = playlist.images?.[0]?.url;
+        const fetchCover = show.type === 'episodes'
+          ? getShow(show.showId)
+          : getPlaylist(show.playlistId);
+        fetchCover
+          .then(result => {
+            const url = result.images?.[0]?.url;
             if (url) {
               playlistImageCache[show.id] = url;
               tile.querySelector('img').src = url;
               writeCache(cacheKey, url);
             }
           })
-          .catch(err => console.error('Failed to load playlist image', show.id, err));
+          .catch(err => console.error('Failed to load home tile image', show.id, err));
       }
     }
   }
