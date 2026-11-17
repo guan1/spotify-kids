@@ -7,6 +7,22 @@ const storiesCache = {}; // showId -> [{title, image, albumId, uris}] (uris fill
 let playerController = null;
 let currentStoryPaused = true;
 let wakeLock = null;
+let seekUpdateInterval = null;
+
+function stopSeekUpdates() {
+  if (seekUpdateInterval) {
+    clearInterval(seekUpdateInterval);
+    seekUpdateInterval = null;
+  }
+}
+
+function formatTime(ms) {
+  if (!ms || ms < 0) return '0:00';
+  const totalSeconds = Math.floor(ms / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+}
 
 // Guards against a runaway auto-advance chain reaction: if playback of a
 // story fails in a way that immediately looks like "finished" (e.g. an
@@ -199,6 +215,7 @@ async function renderHomeScreen() {
   playerController?.pause();
   releaseWakeLock();
   resetAutoAdvanceGuard();
+  stopSeekUpdates();
 
   root.innerHTML = '';
   const grid = el('<div class="grid"></div>');
@@ -264,6 +281,7 @@ async function renderShowScreen(showId) {
   playerController?.pause();
   releaseWakeLock();
   resetAutoAdvanceGuard();
+  stopSeekUpdates();
   renderLoading('Lade Geschichten…');
 
   let stories;
@@ -308,6 +326,8 @@ async function renderPlayerScreen(showId, storyIndex) {
   const show = SHOWS.find(s => s.id === showId);
   if (!show) return navigate('/');
 
+  stopSeekUpdates(); // navigating prev/next stays on this screen, never re-entering it from scratch
+
   let stories = storiesCache[showId];
   if (!stories) {
     renderLoading('Lade Geschichten…');
@@ -328,9 +348,16 @@ async function renderPlayerScreen(showId, storyIndex) {
     <div class="player-screen" style="background-image:url('${story.image || ''}')">
       <button class="back-button" aria-label="Zurück">←</button>
       <div class="player-controls">
-        <button class="control prev" aria-label="Vorherige Geschichte">⏮</button>
-        <button class="control play-pause" aria-label="Play/Pause">⏵</button>
-        <button class="control next" aria-label="Nächste Geschichte">⏭</button>
+        <div class="seek-bar">
+          <span class="seek-time elapsed">0:00</span>
+          <input type="range" class="seek-slider" min="0" max="0" value="0" disabled aria-label="Position">
+          <span class="seek-time total">0:00</span>
+        </div>
+        <div class="control-buttons">
+          <button class="control prev" aria-label="Vorherige Geschichte">⏮</button>
+          <button class="control play-pause" aria-label="Play/Pause">⏵</button>
+          <button class="control next" aria-label="Nächste Geschichte">⏭</button>
+        </div>
       </div>
     </div>
   `);
@@ -341,6 +368,9 @@ async function renderPlayerScreen(showId, storyIndex) {
   const prevBtn = screen.querySelector('.prev');
   const nextBtn = screen.querySelector('.next');
   const playPauseBtn = screen.querySelector('.play-pause');
+  const seekSlider = screen.querySelector('.seek-slider');
+  const elapsedLabel = screen.querySelector('.seek-time.elapsed');
+  const totalLabel = screen.querySelector('.seek-time.total');
 
   prevBtn.disabled = storyIndex === 0;
   nextBtn.disabled = storyIndex === stories.length - 1;
@@ -355,6 +385,37 @@ async function renderPlayerScreen(showId, storyIndex) {
   });
   playPauseBtn.addEventListener('click', () => playerController?.togglePlay());
 
+  // Position/duration only arrive via player_state_changed events, which
+  // fire on play/pause/seek/track-change — not continuously. Interpolate
+  // between events locally for a smoothly moving slider, based on a local
+  // timestamp (not the SDK's own, to sidestep any clock-skew concerns).
+  let isSeeking = false;
+  let knownPosition = 0;
+  let knownDuration = 0;
+  let knownAt = 0;
+  let isPlaying = false;
+
+  seekSlider.addEventListener('input', () => {
+    isSeeking = true;
+    elapsedLabel.textContent = formatTime(Number(seekSlider.value));
+  });
+  seekSlider.addEventListener('change', () => {
+    const target = Number(seekSlider.value);
+    playerController?.seek(target);
+    knownPosition = target;
+    knownAt = Date.now();
+    isSeeking = false;
+  });
+
+  seekUpdateInterval = setInterval(() => {
+    if (isSeeking || !knownDuration) return;
+    const displayed = isPlaying
+      ? Math.min(knownDuration, knownPosition + (Date.now() - knownAt))
+      : knownPosition;
+    seekSlider.value = displayed;
+    elapsedLabel.textContent = formatTime(displayed);
+  }, 500);
+
   if (!playerController) {
     playerController = new SpotifyPlayerController();
   }
@@ -366,6 +427,18 @@ async function renderPlayerScreen(showId, storyIndex) {
   playerController.onStateChange = state => {
     currentStoryPaused = state.paused;
     playPauseBtn.textContent = state.paused ? '⏵' : '⏸';
+
+    isPlaying = !state.paused;
+    knownPosition = state.position;
+    knownDuration = state.duration;
+    knownAt = Date.now();
+    if (!isSeeking) {
+      seekSlider.disabled = !state.duration;
+      seekSlider.max = state.duration;
+      seekSlider.value = state.position;
+      elapsedLabel.textContent = formatTime(state.position);
+      totalLabel.textContent = formatTime(state.duration);
+    }
 
     if (!state.paused) hasStartedPlaying = true;
 

@@ -137,12 +137,69 @@ html, body {
   position: relative;
   z-index: 5;
   display: flex;
-  align-items: center;
-  gap: 24px;
+  flex-direction: column;
+  gap: 18px;
   width: 100%;
   padding: 0 24px max(32px, env(safe-area-inset-bottom));
-  justify-content: center;
   background: linear-gradient(transparent, rgba(0, 0, 0, 0.7) 40%);
+}
+
+.control-buttons {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  justify-content: center;
+}
+
+.seek-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.seek-time {
+  font-size: 0.75rem;
+  color: rgba(255, 255, 255, 0.8);
+  min-width: 38px;
+  flex-shrink: 0;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.seek-slider {
+  flex: 1;
+  -webkit-appearance: none;
+  appearance: none;
+  height: 36px; /* generous touch target; visual track is thinner, see below */
+  background: transparent;
+  margin: 0;
+  accent-color: #1db954;
+}
+.seek-slider:disabled {
+  opacity: 0.4;
+}
+.seek-slider::-webkit-slider-runnable-track {
+  height: 8px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.3);
+}
+.seek-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 26px;
+  height: 26px;
+  margin-top: -9px;
+  border-radius: 50%;
+  background: #fff;
+}
+.seek-slider::-moz-range-track {
+  height: 8px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.3);
+}
+.seek-slider::-moz-range-thumb {
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: 50%;
+  background: #fff;
 }
 
 .control {

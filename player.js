@@ -99,6 +99,10 @@ class SpotifyPlayerController {
     return this.player?.pause();
   }
 
+  seek(positionMs) {
+    return this.player?.seek(positionMs);
+  }
+
   disconnect() {
     this.player?.disconnect();
     this.player = null;
