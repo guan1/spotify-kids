@@ -2,17 +2,24 @@ const root = document.getElementById('app');
 
 // In-memory caches so navigating back and forth doesn't refetch every time.
 const playlistImageCache = {}; // showId -> image url
-const storiesCache = {}; // showId -> [{title, image, albumId, uris}] (uris filled in lazily)
+const storiesCache = {}; // showId -> [{title, image, albumId, tracks}] (tracks: [{uri, duration}], filled in lazily for albums, eager for episodes)
 
 let playerController = null;
 let currentStoryPaused = true;
 let wakeLock = null;
 let seekUpdateInterval = null;
+let stallWatchdogInterval = null;
 
 function stopSeekUpdates() {
   if (seekUpdateInterval) {
     clearInterval(seekUpdateInterval);
     seekUpdateInterval = null;
+  }
+}
+function stopStallWatchdog() {
+  if (stallWatchdogInterval) {
+    clearInterval(stallWatchdogInterval);
+    stallWatchdogInterval = null;
   }
 }
 
@@ -22,6 +29,37 @@ function formatTime(ms) {
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
   return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+}
+
+// A "story" can be stitched together from several tracks/chapters played
+// back to back (an album's chapters, queued via playUris). These turn a
+// story's tracks into one continuous timeline spanning all of them.
+function computeCumulative(tracks) {
+  let total = 0;
+  const starts = tracks.map(t => {
+    const start = total;
+    total += t.duration || 0;
+    return start;
+  });
+  return { starts, total };
+}
+function findTrackIndex(starts, globalMs) {
+  let idx = 0;
+  for (let i = 0; i < starts.length; i++) {
+    if (starts[i] <= globalMs) idx = i; else break;
+  }
+  return idx;
+}
+
+// The SDK's track_window.previous_tracks is only a short window of nearby
+// tracks, not full history, so it can't be used as a queue index. Match
+// the actual playing track by URI instead (falling back to its relinked
+// URI, since Spotify can substitute an equivalent track). Returns -1 if
+// the event doesn't belong to this story at all — e.g. a stray event from
+// a story we just navigated away from while its tracks were still loading.
+function matchTrackIndex(tracks, currentTrack) {
+  if (!tracks || !currentTrack) return -1;
+  return tracks.findIndex(t => t.uri === currentTrack.uri || t.uri === currentTrack.linked_from?.uri);
 }
 
 // Guards against a runaway auto-advance chain reaction: if playback of a
@@ -106,7 +144,9 @@ function writeCache(key, data) {
 // albums, after discovering episode playback doesn't work) can't
 // accidentally reuse stale data in the old schema.
 function storiesCacheKey(show) {
-  return `sk_stories_${show.id}_${show.type}`;
+  // v2: schema gained per-track durations (`tracks` instead of `uris`) —
+  // bump the key so an old cached entry can't be read in the new shape.
+  return `sk_stories_v2_${show.id}_${show.type}`;
 }
 
 // Loads (and caches, in memory + localStorage) the story list for a show —
@@ -136,7 +176,8 @@ async function fetchAndCacheStories(showId) {
     stories = episodes.map(episode => ({
       title: episode.name,
       image: episode.images?.[0]?.url || null,
-      uris: [episode.uri] // episodes carry their own URI directly, no lookup needed
+      // Episodes carry their own URI and duration directly, no lookup needed.
+      tracks: [{ uri: episode.uri, duration: episode.duration_ms }]
     }));
   } else {
     const albums = await getArtistAlbums(show.artistId);
@@ -144,7 +185,7 @@ async function fetchAndCacheStories(showId) {
       title: album.name,
       image: album.images?.[0]?.url || null,
       albumId: album.id,
-      uris: null
+      tracks: null
     }));
   }
 
@@ -165,16 +206,16 @@ function refreshStoriesIfStale(showId) {
   );
 }
 
-// Track URIs for an album essentially never change — cache them for longer.
-async function loadAlbumUris(albumId) {
-  const cacheKey = `sk_album_uris_${albumId}`;
+// Track list for an album essentially never changes — cache it for longer.
+async function loadAlbumTracks(albumId) {
+  const cacheKey = `sk_album_tracks_${albumId}`;
   const cached = readCache(cacheKey, 30 * DAY_MS);
   if (cached) return cached;
 
-  const tracks = await getAlbumTracks(albumId);
-  const uris = tracks.map(t => t.uri);
-  writeCache(cacheKey, uris);
-  return uris;
+  const rawTracks = await getAlbumTracks(albumId);
+  const tracks = rawTracks.map(t => ({ uri: t.uri, duration: t.duration_ms }));
+  writeCache(cacheKey, tracks);
+  return tracks;
 }
 
 function el(html) {
@@ -216,6 +257,7 @@ async function renderHomeScreen() {
   releaseWakeLock();
   resetAutoAdvanceGuard();
   stopSeekUpdates();
+  stopStallWatchdog();
 
   root.innerHTML = '';
   const grid = el('<div class="grid"></div>');
@@ -282,6 +324,7 @@ async function renderShowScreen(showId) {
   releaseWakeLock();
   resetAutoAdvanceGuard();
   stopSeekUpdates();
+  stopStallWatchdog();
   renderLoading('Lade Geschichten…');
 
   let stories;
@@ -327,6 +370,7 @@ async function renderPlayerScreen(showId, storyIndex) {
   if (!show) return navigate('/');
 
   stopSeekUpdates(); // navigating prev/next stays on this screen, never re-entering it from scratch
+  stopStallWatchdog();
 
   let stories = storiesCache[showId];
   if (!stories) {
@@ -342,6 +386,28 @@ async function renderPlayerScreen(showId, storyIndex) {
   if (!stories[storyIndex]) return navigate('/');
 
   const story = stories[storyIndex];
+
+  // A story's tracks may be stitched chapters played back to back (an
+  // album queued via playUris) — the timeline spans all of them, not just
+  // whichever chapter is currently playing. Recomputed once the album's
+  // track list is lazily loaded, below.
+  let cumulativeStarts = [];
+  let totalDuration = 0;
+  let currentTrackIndex = 0;
+  function syncCumulative() {
+    if (!story.tracks) return;
+    ({ starts: cumulativeStarts, total: totalDuration } = computeCumulative(story.tracks));
+  }
+  syncCumulative();
+
+  async function startAt(trackIndex, positionMs) {
+    if (show.contextPlaylistId) {
+      const contextUri = `spotify:playlist:${show.contextPlaylistId}`;
+      await playerController.playContextAtOffset(contextUri, story.tracks[trackIndex].uri, positionMs);
+    } else {
+      await playerController.playUris(story.tracks.map(t => t.uri), trackIndex, positionMs);
+    }
+  }
 
   root.innerHTML = '';
   const screen = el(`
@@ -383,7 +449,20 @@ async function renderPlayerScreen(showId, storyIndex) {
     resetAutoAdvanceGuard();
     navigate(`/play/${showId}/${storyIndex + 1}`);
   });
-  playPauseBtn.addEventListener('click', () => playerController?.togglePlay());
+  // A tap on play/pause is also the user's natural "something's wrong,
+  // nudge it" gesture — if the session looks unresponsive (no state within
+  // a beat), treat the tap as a recovery request instead of a no-op toggle.
+  playPauseBtn.addEventListener('click', async () => {
+    const state = await Promise.race([
+      playerController.getCurrentState(),
+      new Promise(resolve => setTimeout(() => resolve(undefined), 1200))
+    ]);
+    if (state === undefined || state === null) {
+      recoverPlayback();
+    } else {
+      playerController.togglePlay();
+    }
+  });
 
   // Position/duration only arrive via player_state_changed events, which
   // fire on play/pause/seek/track-change — not continuously. Interpolate
@@ -401,10 +480,23 @@ async function renderPlayerScreen(showId, storyIndex) {
   });
   seekSlider.addEventListener('change', () => {
     const target = Number(seekSlider.value);
-    playerController?.seek(target);
     knownPosition = target;
     knownAt = Date.now();
-    isSeeking = false;
+
+    const targetIndex = cumulativeStarts.length ? findTrackIndex(cumulativeStarts, target) : 0;
+    const targetOffset = cumulativeStarts.length ? target - cumulativeStarts[targetIndex] : target;
+
+    if (!cumulativeStarts.length || targetIndex === currentTrackIndex) {
+      // Same chapter — cheap client-side seek, no API call.
+      playerController?.seek(targetOffset);
+      isSeeking = false;
+    } else {
+      // Crossing into a different chapter needs a fresh play-at-offset
+      // call (the SDK can only seek within the currently playing track).
+      startAt(targetIndex, targetOffset)
+        .catch(err => console.error('Seek across chapters failed', err))
+        .finally(() => { isSeeking = false; });
+    }
   });
 
   seekUpdateInterval = setInterval(() => {
@@ -428,16 +520,27 @@ async function renderPlayerScreen(showId, storyIndex) {
     currentStoryPaused = state.paused;
     playPauseBtn.textContent = state.paused ? '⏵' : '⏸';
 
+    // Ignore events that don't belong to this story at all — e.g. a stray
+    // event from the previous story, still arriving while this one's
+    // tracks are being lazily loaded (a prev/next in quick succession).
+    const matchedIndex = story.tracks ? matchTrackIndex(story.tracks, state.track_window.current_track) : -1;
+    if (matchedIndex === -1) return;
+    currentTrackIndex = matchedIndex;
+    const trackStart = cumulativeStarts[currentTrackIndex] ?? 0;
+    const globalPosition = trackStart + state.position;
+    const globalDuration = totalDuration || state.duration;
+
     isPlaying = !state.paused;
-    knownPosition = state.position;
-    knownDuration = state.duration;
+    knownPosition = globalPosition;
+    knownDuration = globalDuration;
     knownAt = Date.now();
+    lastConfirmed = { position: globalPosition, at: knownAt };
     if (!isSeeking) {
-      seekSlider.disabled = !state.duration;
-      seekSlider.max = state.duration;
-      seekSlider.value = state.position;
-      elapsedLabel.textContent = formatTime(state.position);
-      totalLabel.textContent = formatTime(state.duration);
+      seekSlider.disabled = !globalDuration;
+      seekSlider.max = globalDuration;
+      seekSlider.value = globalPosition;
+      elapsedLabel.textContent = formatTime(globalPosition);
+      totalLabel.textContent = formatTime(globalDuration);
     }
 
     if (!state.paused) hasStartedPlaying = true;
@@ -466,22 +569,112 @@ async function renderPlayerScreen(showId, storyIndex) {
     }
   };
 
+  // Spotify Connect occasionally goes silent without ever firing a
+  // player_state_changed event (dropped connection, backgrounded tab) —
+  // poll the SDK's own state periodically and compare against wall-clock
+  // time to notice a session that's stopped actually advancing. Requires
+  // two bad readings in a row (not just one) before acting, and caps how
+  // often it'll auto-recover — a false positive that retriggered on every
+  // tick is exactly the kind of loop that burned a day's quota before.
+  let lastConfirmed = { position: 0, at: 0 };
+  let recoveryInFlight = false;
+  let consecutiveStalls = 0;
+  let autoRecoveries = { count: 0, windowStart: 0 };
+
+  function autoRecoveryAllowed() {
+    const now = Date.now();
+    if (!autoRecoveries.windowStart || now - autoRecoveries.windowStart > 5 * 60 * 1000) {
+      autoRecoveries = { count: 0, windowStart: now };
+    }
+    autoRecoveries.count++;
+    return autoRecoveries.count <= 2;
+  }
+
+  function startStallWatchdog() {
+    stopStallWatchdog();
+    consecutiveStalls = 0;
+    lastConfirmed = { position: knownPosition, at: Date.now() };
+    stallWatchdogInterval = setInterval(async () => {
+      if (recoveryInFlight) return;
+      if (!isPlaying) { consecutiveStalls = 0; return; }
+
+      const state = await playerController.getCurrentState().catch(() => null);
+      const now = Date.now();
+
+      if (!state) {
+        consecutiveStalls++;
+      } else {
+        const idx = story.tracks ? matchTrackIndex(story.tracks, state.track_window.current_track) : -1;
+        if (idx === -1) return; // stray event, not this story — skip this tick
+        const realPosition = (cumulativeStarts[idx] ?? 0) + state.position;
+        const elapsed = now - lastConfirmed.at;
+        const advanced = realPosition - lastConfirmed.position;
+        // Real playback tracks wall-clock time; if it's barely moved over a
+        // real window while we believe it's playing, it looks stalled.
+        if (!state.paused && elapsed > 4000 && advanced < 2000) {
+          consecutiveStalls++;
+        } else {
+          consecutiveStalls = 0;
+          lastConfirmed = { position: realPosition, at: now };
+        }
+      }
+
+      if (consecutiveStalls >= 2) {
+        consecutiveStalls = 0;
+        if (autoRecoveryAllowed()) {
+          recoverPlayback();
+        } else {
+          console.error('Automatic recovery limit reached — leaving it for a manual play-button tap.');
+          stopStallWatchdog();
+        }
+      }
+    }, 6000);
+  }
+
+  async function recoverPlayback() {
+    if (recoveryInFlight) return;
+    recoveryInFlight = true;
+    console.warn('Playback looked stuck — resuming at', lastConfirmed.position);
+    renderLoadingOverlay(screen);
+
+    const resumeIndex = cumulativeStarts.length ? findTrackIndex(cumulativeStarts, lastConfirmed.position) : 0;
+    const resumeOffset = cumulativeStarts.length
+      ? lastConfirmed.position - cumulativeStarts[resumeIndex]
+      : lastConfirmed.position;
+
+    // Bounded so a wedged SDK can never leave recoveryInFlight stuck true
+    // (which would silently kill the watchdog and leave "Verbinde…" up
+    // forever) — startAt()'s own retry-on-404 path is the real fallback.
+    const attempt = (async () => {
+      await playerController.reconnect();
+      await startAt(resumeIndex, resumeOffset);
+    })();
+    try {
+      await Promise.race([
+        attempt,
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Recovery timed out')), 8000))
+      ]);
+      lastConfirmed = { position: lastConfirmed.position, at: Date.now() };
+    } catch (err) {
+      console.error('Automatic playback recovery failed', err);
+    } finally {
+      removeLoadingOverlay(screen);
+      recoveryInFlight = false;
+    }
+  }
+
   renderLoadingOverlay(screen);
   try {
-    if (show.contextPlaylistId) {
-      // See config.js for why this playlist-context workaround is needed.
-      const contextUri = `spotify:playlist:${show.contextPlaylistId}`;
-      await playerController.playContextAtOffset(contextUri, story.uris[0]);
-    } else {
-      if (!story.uris) {
-        story.uris = await loadAlbumUris(story.albumId);
-      }
-      await playerController.playUris(story.uris);
+    if (!story.tracks) {
+      story.tracks = await loadAlbumTracks(story.albumId);
+      syncCumulative();
     }
+    await startAt(0, 0);
     playbackStartedAt = Date.now();
     removeLoadingOverlay(screen);
     acquireWakeLock();
     saveContinueListening({ showId, storyIndex, title: story.title, image: story.image });
+    startStallWatchdog();
   } catch (err) {
     console.error('Failed to start playback', err);
     renderError(err.message, () => renderPlayerScreen(showId, storyIndex));

@@ -90,11 +90,17 @@ async function getShowEpisodes(showId) {
   return episodes;
 }
 
-async function startPlayback(deviceId, uris) {
+async function startPlayback(deviceId, uris, offsetIndex = 0, positionMs = 0) {
+  // offset/position_ms are only added when actually needed (a cross-chapter
+  // seek or a stall recovery) — the plain-uris shape below is the one
+  // that's been confirmed working for every normal story start.
+  const body = { uris };
+  if (offsetIndex) body.offset = { position: offsetIndex };
+  if (positionMs) body.position_ms = positionMs;
   await apiFetch(`/me/player/play?device_id=${deviceId}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ uris })
+    body: JSON.stringify(body)
   });
 }
 
@@ -107,10 +113,12 @@ async function startPlayback(deviceId, uris) {
 // hit play on someone else's shared playlist link. This targets a
 // specific episode without ever reading the playlist itself; metadata
 // comes from getShowEpisodes instead.
-async function startPlaybackAtOffset(deviceId, contextUri, offsetUri) {
+async function startPlaybackAtOffset(deviceId, contextUri, offsetUri, positionMs = 0) {
+  const body = { context_uri: contextUri, offset: { uri: offsetUri } };
+  if (positionMs) body.position_ms = positionMs;
   await apiFetch(`/me/player/play?device_id=${deviceId}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ context_uri: contextUri, offset: { uri: offsetUri } })
+    body: JSON.stringify(body)
   });
 }

@@ -66,13 +66,13 @@ class SpotifyPlayerController {
     return new Promise(resolve => this._deviceWaiters.push(resolve));
   }
 
-  async playUris(uris) {
-    await this._playWithDeviceRetry(deviceId => startPlayback(deviceId, uris));
+  async playUris(uris, offsetIndex = 0, positionMs = 0) {
+    await this._playWithDeviceRetry(deviceId => startPlayback(deviceId, uris, offsetIndex, positionMs));
   }
 
   // Used for podcast-episode shows — see startPlaybackAtOffset in api.js.
-  async playContextAtOffset(contextUri, offsetUri) {
-    await this._playWithDeviceRetry(deviceId => startPlaybackAtOffset(deviceId, contextUri, offsetUri));
+  async playContextAtOffset(contextUri, offsetUri, positionMs = 0) {
+    await this._playWithDeviceRetry(deviceId => startPlaybackAtOffset(deviceId, contextUri, offsetUri, positionMs));
   }
 
   async _playWithDeviceRetry(play) {
@@ -101,6 +101,25 @@ class SpotifyPlayerController {
 
   seek(positionMs) {
     return this.player?.seek(positionMs);
+  }
+
+  getCurrentState() {
+    return this.player?.getCurrentState();
+  }
+
+  // Nudges the SDK to re-establish the existing device after it's gone
+  // stale, without tearing down and recreating the Player object —
+  // recreating it from outside a user gesture risks iOS silently refusing
+  // to grant audio again. Bounded: if no fresh 'ready' event shows up in
+  // time, resolve anyway — the caller's own retry-on-404 path is the
+  // ultimate fallback, and this must never hang forever.
+  reconnect(timeoutMs = 5000) {
+    this.deviceId = null;
+    this.player?.connect();
+    return Promise.race([
+      this.waitForDevice(),
+      new Promise(resolve => setTimeout(() => resolve(null), timeoutMs))
+    ]);
   }
 
   disconnect() {
